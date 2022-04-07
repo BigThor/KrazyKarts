@@ -3,6 +3,7 @@
 
 #include "GoKart.h"
 #include "DrawDebugHelpers.h"
+#include "Net/UnrealNetwork.h"
 
 // Sets default values
 AGoKart::AGoKart()
@@ -10,14 +11,28 @@ AGoKart::AGoKart()
  	// Set this pawn to call Tick() every frame.  You can turn this off to improve performance if you don't need it.
 	PrimaryActorTick.bCanEverTick = true;
 
+	bReplicates = true;
 }
 
 // Called when the game starts or when spawned
 void AGoKart::BeginPlay()
 {
 	Super::BeginPlay();
-	
-	Velocity = FVector::ZeroVector;
+
+	if (HasAuthority())
+	{
+		NetUpdateFrequency = 1;
+	}
+}
+
+void AGoKart::GetLifetimeReplicatedProps(TArray< FLifetimeProperty >& OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+
+	DOREPLIFETIME(AGoKart, Throttle);
+	DOREPLIFETIME(AGoKart, SteeringThrow);
+	DOREPLIFETIME(AGoKart, Velocity);
+	DOREPLIFETIME(AGoKart, ReplicatedTransform);
 }
 
 FString GetEnumText(ENetRole Role)
@@ -47,10 +62,10 @@ void AGoKart::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 
+
+	FVector Force = GetActorForwardVector() * Throttle * ForceScaleFactor;
 	Force += GetAirResistance() + GetRollingResistance();
 	FVector Acceleration = Force / Mass;
-
-	GetRollingResistance();
 
 	Velocity = Velocity + Acceleration * DeltaTime;
 
@@ -58,6 +73,16 @@ void AGoKart::Tick(float DeltaTime)
 	UpdateLocationFromVelocity(DeltaTime);
 
 	DrawDebugString(GetWorld(), FVector(0, 0, 100), GetEnumText(GetLocalRole()), this, FColor::Emerald, DeltaTime);
+
+	if (HasAuthority())
+	{
+		ReplicatedTransform = GetActorTransform();
+	}
+}
+
+void AGoKart::OnRep_ReplicatedTransform()
+{
+	SetActorTransform(ReplicatedTransform);
 }
 
 // Called to bind functionality to input
@@ -76,9 +101,8 @@ void AGoKart::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
 
 FVector AGoKart::GetAirResistance()
 {
-	float Speed = Velocity.Size();
-	float AirResistance = -(Speed * Speed * DragCoefficient);
-	return Velocity.GetSafeNormal() * AirResistance;
+	float AirResistance = Velocity.SizeSquared() * DragCoefficient;
+	return -Velocity.GetSafeNormal() * AirResistance;
 }
 
 FVector AGoKart::GetRollingResistance()
@@ -119,7 +143,7 @@ void AGoKart::UpdateLocationFromVelocity(float DeltaTime)
 
 void AGoKart::MoveForward(float Value)
 {
-	Force = GetActorForwardVector() * Value * ForceScaleFactor;
+	Throttle = Value;
 	Server_MoveForward(Value);
 }
 
@@ -132,7 +156,7 @@ void AGoKart::MoveRight(float Value)
 
 void AGoKart::Server_MoveForward_Implementation(float Value)
 {
-	Force = GetActorForwardVector() * Value * ForceScaleFactor;
+	Throttle = Value;
 }
 
 bool AGoKart::Server_MoveForward_Validate(float Value)
